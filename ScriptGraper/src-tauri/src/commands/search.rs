@@ -1,8 +1,10 @@
 use std::fs;
+use std::os::windows::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 use tauri::Emitter;
 use walkdir::WalkDir;
+use encoding_rs::WINDOWS_1252;
 
 // Extensões suportadas
 fn eh_arquivo_suportado(ext: &str) -> bool {
@@ -15,11 +17,19 @@ fn eh_arquivo_suportado(ext: &str) -> bool {
 
 // Lê conteúdo de PDF usando pdftotext.exe
 fn ler_pdf(caminho: &str, exe_dir: &str) -> String {
-    let pdftotext = format!("{}\\bins\\pdftotext.exe", exe_dir);
+    let caminhos_possiveis = vec![
+        format!("{}\\bins\\pdftotext.exe", exe_dir),
+        format!("{}\\public\\bins\\pdftotext.exe", exe_dir),
+        format!("{}\\..\\public\\bins\\pdftotext.exe", exe_dir),
+        format!("{}\\..\\..\\public\\bins\\pdftotext.exe", exe_dir),
+        format!("{}\\..\\..\\..\\public\\bins\\pdftotext.exe", exe_dir),
+        format!("{}\\..\\..\\..\\..\\public\\bins\\pdftotext.exe", exe_dir),
+    ];
 
-    if !Path::new(&pdftotext).exists() {
-        return String::new();
-    }
+    let pdftotext = caminhos_possiveis
+        .into_iter()
+        .find(|p| Path::new(p).exists())
+        .unwrap_or_default();
 
     let temp = format!("{}\\pdftemp_{}.txt",
         std::env::temp_dir().to_str().unwrap_or("C:\\Temp"),
@@ -31,15 +41,17 @@ fn ler_pdf(caminho: &str, exe_dir: &str) -> String {
 
     let _ = Command::new(&pdftotext)
         .args([caminho, &temp])
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .creation_flags(0x08000000)
         .output();
 
     let conteudo = fs::read_to_string(&temp).unwrap_or_default();
+
     let _ = fs::remove_file(&temp);
     conteudo
 }
 
 #[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SearchResult {
     pub file_name: String,
     pub file_path: String,
@@ -54,6 +66,15 @@ pub struct SearchProgress {
     pub result: Option<SearchResult>,
     pub finished: bool,
     pub cancelled: bool,
+}
+
+#[tauri::command]
+pub fn abrir_arquivo(caminho: String) -> Result<(), String> {
+    Command::new("explorer")
+        .args([&caminho])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -124,6 +145,8 @@ pub async fn realizar_busca(
         result: None, finished: false, cancelled: false,
     });
 
+let mut quantidade_arquivos = 0;
+
     for (i, arquivo) in arquivos.iter().enumerate() {
         let ext = Path::new(arquivo)
             .extension()
@@ -134,15 +157,26 @@ pub async fn realizar_busca(
         let conteudo = if ext == "pdf" {
             ler_pdf(arquivo, &exe_dir).to_uppercase()
         } else {
-            fs::read_to_string(arquivo).unwrap_or_default().to_uppercase()
+            // tenta UTF-8 primeiro, se falhar usa Windows-1252
+            match fs::read(arquivo) {
+                Ok(bytes) => {
+                    match String::from_utf8(bytes.clone()) {
+                        Ok(texto) => texto.to_uppercase(),
+                        Err(_) => {
+                            let (texto, _, _) = WINDOWS_1252.decode(&bytes);
+                            texto.to_uppercase()
+                        }
+                    }
+                }
+                Err(_) => continue,
+            }
         };
 
         if conteudo.is_empty() {
             continue;
         }
 
-        // Conta ocorrências
-        let match_count = conteudo.matches(&termo.as_str()).count();
+        let match_count = conteudo.matches(termo.as_str()).count();
 
         if i % 50 == 0 {
             let _ = window.emit("search_progress", SearchProgress {
@@ -153,6 +187,8 @@ pub async fn realizar_busca(
         }
 
         if match_count > 0 {
+            quantidade_arquivos += 1;
+
             let file_name = Path::new(arquivo)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -169,6 +205,14 @@ pub async fn realizar_busca(
                 finished: false, cancelled: false,
             });
         }
+    }
+
+    if quantidade_arquivos == 0 {
+        let _ = window.emit("search_progress", SearchProgress {
+            current: total, total,
+            log: Some("Nenhum arquivo possui o conteúdo informado.".to_string()),
+            result: None, finished: false, cancelled: false,
+        });
     }
 
     let _ = window.emit("search_progress", SearchProgress {

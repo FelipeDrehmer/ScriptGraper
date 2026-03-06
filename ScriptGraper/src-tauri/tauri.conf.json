@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "scriptgraper-app",
-        "width": 800,
-        "height": 600
+        "title": "Script Graper",
+        "width": 900,
+        "height": 650,
+        "minWidth": 750,
+        "minHeight": 550,
+        "theme": "Dark",
+        "decorations": false
       }
     ],
     "security": {

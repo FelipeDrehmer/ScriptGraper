@@ -50,5 +50,4 @@ export const FILE_FILTERS = [
     '*.yaml',
     '*.md',
     '*.pdf',
-    '*.*',
 ] as const;
