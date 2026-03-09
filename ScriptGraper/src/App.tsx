@@ -61,6 +61,7 @@ function App() {
         <ProgressBar
           progress={state.progress}
           totalFiles={state.totalFiles}
+          isCancelled={state.isCancelled}
         />
         <ResultLog
           logs={state.logs}

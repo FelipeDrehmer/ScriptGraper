@@ -1,9 +1,12 @@
 type Props = {
     progress: number;
     totalFiles: number;
+    isCancelled: boolean;
 };
 
-export function ProgressBar({ progress, totalFiles }: Props) {
+export function ProgressBar({ progress, totalFiles, isCancelled }: Props) {
+    if (isCancelled || totalFiles === 0) return <div className="progress-wrap" />;
+
     return (
         <div className="progress-wrap">
             <div className="progress-bar-bg">

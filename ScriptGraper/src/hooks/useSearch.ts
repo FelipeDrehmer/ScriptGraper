@@ -62,8 +62,15 @@ export function useSearch() {
         });
     }, []);
 
-    const cancelSearch = useCallback(() => {
-        setState((prev) => ({ ...prev, isCancelled: true, isSearching: false }));
+    const cancelSearch = useCallback(async () => {
+        await invoke("cancelar_busca");
+        setState((prev) => ({ 
+            ...prev, 
+            isCancelled: true, 
+            isSearching: false,
+            progress: 0,
+            totalFiles: 0,
+        }));
     }, []);
 
     return { state, startSearch, cancelSearch };

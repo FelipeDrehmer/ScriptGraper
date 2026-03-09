@@ -5,8 +5,10 @@ use std::process::Command;
 use tauri::Emitter;
 use walkdir::WalkDir;
 use encoding_rs::WINDOWS_1252;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::State;
 
-// Extensões suportadas
 fn eh_arquivo_suportado(ext: &str) -> bool {
     matches!(ext,
         "txt" | "sql" | "log" | "json" | "xml" | "ini" |
@@ -15,7 +17,6 @@ fn eh_arquivo_suportado(ext: &str) -> bool {
     )
 }
 
-// Lê conteúdo de PDF usando pdftotext.exe
 fn ler_pdf(caminho: &str, exe_dir: &str) -> String {
     let caminhos_possiveis = vec![
         format!("{}\\bins\\pdftotext.exe", exe_dir),
@@ -45,7 +46,6 @@ fn ler_pdf(caminho: &str, exe_dir: &str) -> String {
         .output();
 
     let conteudo = fs::read_to_string(&temp).unwrap_or_default();
-
     let _ = fs::remove_file(&temp);
     conteudo
 }
@@ -68,6 +68,13 @@ pub struct SearchProgress {
     pub cancelled: bool,
 }
 
+pub struct CancelFlag(pub Arc<AtomicBool>);
+
+#[tauri::command]
+pub fn cancelar_busca(flag: State<CancelFlag>) {
+    flag.0.store(true, Ordering::Relaxed);
+}
+
 #[tauri::command]
 pub fn abrir_arquivo(caminho: String) -> Result<(), String> {
     Command::new("explorer")
@@ -80,11 +87,14 @@ pub fn abrir_arquivo(caminho: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn realizar_busca(
     window: tauri::Window,
+    flag: State<'_, CancelFlag>,
     folder_path: String,
     search_term: String,
     file_filter: String,
     search_sub_folders: bool,
 ) -> Result<(), String> {
+
+    flag.0.store(false, Ordering::Relaxed);
 
     let termo = search_term.to_uppercase();
     let exe_dir = std::env::current_exe()
@@ -92,7 +102,6 @@ pub async fn realizar_busca(
         .and_then(|p| p.parent().map(|p| p.to_string_lossy().to_string()))
         .unwrap_or_default();
 
-    // Coleta arquivos
     let arquivos: Vec<String> = if search_sub_folders {
         WalkDir::new(&folder_path)
             .into_iter()
@@ -109,7 +118,6 @@ pub async fn realizar_busca(
             .collect()
     };
 
-    // Filtra por extensão
     let arquivos: Vec<String> = if file_filter == "*.*" {
         arquivos.into_iter()
             .filter(|f| {
@@ -145,9 +153,19 @@ pub async fn realizar_busca(
         result: None, finished: false, cancelled: false,
     });
 
-let mut quantidade_arquivos = 0;
+    let mut quantidade_arquivos = 0;
 
     for (i, arquivo) in arquivos.iter().enumerate() {
+
+        if flag.0.load(Ordering::Relaxed) {
+            let _ = window.emit("search_progress", SearchProgress {
+                current: i, total,
+                log: Some("Busca cancelada pelo usuário.".to_string()),
+                result: None, finished: false, cancelled: true,
+            });
+            return Ok(());
+        }
+
         let ext = Path::new(arquivo)
             .extension()
             .and_then(|e| e.to_str())
@@ -157,7 +175,6 @@ let mut quantidade_arquivos = 0;
         let conteudo = if ext == "pdf" {
             ler_pdf(arquivo, &exe_dir).to_uppercase()
         } else {
-            // tenta UTF-8 primeiro, se falhar usa Windows-1252
             match fs::read(arquivo) {
                 Ok(bytes) => {
                     match String::from_utf8(bytes.clone()) {
